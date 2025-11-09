@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional
 import json
-import io
 import datetime as dt
 import streamlit as st
 
@@ -300,18 +299,8 @@ def load_default_agents() -> List[Agent]:
 
 
 # =========================
-# Utilities
+# Utility Functions
 # =========================
-
-def _download_bytes(name: str, data: bytes):
-    st.download_button(
-        label=f"⬇️ Download {name}",
-        data=data,
-        file_name=name,
-        mime="application/json" if name.endswith(".json") else "text/plain",
-        use_container_width=True,
-    )
-
 
 def export_agents_json(agents: List[Agent]):
     payload = {
@@ -319,8 +308,12 @@ def export_agents_json(agents: List[Agent]):
         "project": "BeOfficial",
         "agents": [a.to_dict() for a in agents],
     }
-    buf = json.dumps(payload, indent=2).encode("utf-8")
-    _download_bytes("beofficial_agents.json", buf)
+    st.download_button(
+        label="⬇️ Download beofficial_agents.json",
+        data=json.dumps(payload, indent=2),
+        file_name="beofficial_agents.json",
+        mime="application/json",
+    )
 
 
 def email_preview(subject: str, intro: str, bullets: List[str], footer: str) -> str:
@@ -333,8 +326,7 @@ def email_preview(subject: str, intro: str, bullets: List[str], footer: str) -> 
         "",
         footer,
     ]
-    return "
-".join(body)
+    return "\\n".join(body)  # ✅ FIXED HERE
 
 
 # =========================
@@ -347,30 +339,18 @@ if "agents" not in st.session_state:
 AGENTS = st.session_state.agents
 
 st.title("BeOfficial Agent Team")
-
 st.caption(
     "Define, edit, and export agent profiles for recruiting, social content, industry news, lead gen, and tournament coordination."
 )
 
-# ---- Sidebar ----
+# Sidebar
 st.sidebar.header("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    [
-        "Overview",
-        "Agents",
-        "EARLYBIRD – Email Digest Preview",
-        "SPARK – Content Calendar",
-        "Export",
-    ],
+    ["Overview", "Agents", "EARLYBIRD – Email Digest Preview", "Export"],
 )
 
-st.sidebar.divider()
-st.sidebar.subheader("Quick Settings")
-st.sidebar.text_input("Brand Voice Notes", value="Friendly, clear, energetic, zero fluff")
-st.sidebar.text_input("Primary CTA URL", value="https://beofficial.example.com/start")
-
-# ---- Overview ----
+# Overview Page
 if page == "Overview":
     st.subheader("Quick Overview")
     st.table(
@@ -382,175 +362,34 @@ if page == "Overview":
         }
     )
 
-    st.info(
-        "Tip: Start with two KPIs per agent for Month 1. Example: SCRIBE focuses on Open Rate and Sign Ups."
-    )
-
-# ---- Agents ----
-elif page == "Agents":
-    st.subheader("Agent Profiles")
-
-    tabs = st.tabs([a.codename for a in AGENTS])
-    for tab, agent in zip(tabs, AGENTS):
-        with tab:
-            with st.container(border=True):
-                left, right = st.columns([1.2, 1])
-                with left:
-                    st.markdown(f"### {agent.name}
-**Codename:** `{agent.codename}`")
-                    agent.mission = st.text_area(
-                        "Mission", value=agent.mission, height=100, key=f"ms_{agent.codename}"
-                    )
-                    agent.target_audience = st.text_input(
-                        "Target audience", value=agent.target_audience, key=f"ta_{agent.codename}"
-                    )
-                    agent.value_proposition = st.text_area(
-                        "Value proposition", value=agent.value_proposition, height=90, key=f"vp_{agent.codename}"
-                    )
-                with right:
-                    st.markdown("**KPIs**")
-                    kpi_edit = st.experimental_data_editor(
-                        {"KPIs": agent.kpis}, num_rows="dynamic", key=f"kpi_{agent.codename}"
-                    )
-                    agent.kpis = [k for k in kpi_edit["KPIs"] if k]
-
-                cols = st.columns(2)
-                with cols[0]:
-                    st.markdown("**Core tasks**")
-                    core_edit = st.experimental_data_editor(
-                        {"Tasks": agent.core_tasks}, num_rows="dynamic", key=f"core_{agent.codename}"
-                    )
-                    agent.core_tasks = [t for t in core_edit["Tasks"] if t]
-
-                    st.markdown("**Inputs**")
-                    inp_edit = st.experimental_data_editor(
-                        {"Inputs": agent.inputs}, num_rows="dynamic", key=f"inp_{agent.codename}"
-                    )
-                    agent.inputs = [i for i in inp_edit["Inputs"] if i]
-
-                    st.markdown("**Outputs**")
-                    out_edit = st.experimental_data_editor(
-                        {"Outputs": agent.outputs}, num_rows="dynamic", key=f"out_{agent.codename}"
-                    )
-                    agent.outputs = [o for o in out_edit["Outputs"] if o]
-
-                with cols[1]:
-                    st.markdown("**Data sources**")
-                    src_edit = st.experimental_data_editor(
-                        {"Sources": agent.data_sources}, num_rows="dynamic", key=f"src_{agent.codename}"
-                    )
-                    agent.data_sources = [s for s in src_edit["Sources"] if s]
-
-                    st.markdown("**Guardrails**")
-                    grd_edit = st.experimental_data_editor(
-                        {"Rules": agent.guardrails}, num_rows="dynamic", key=f"grd_{agent.codename}"
-                    )
-                    agent.guardrails = [g for g in grd_edit["Rules"] if g]
-
-                if agent.example_prompts:
-                    st.markdown("**Example prompts**")
-                    for p in agent.example_prompts:
-                        st.code(p, language="text")
-
-                agent.notes = st.text_area(
-                    "Implementation notes (optional)", value=agent.notes or "", key=f"nt_{agent.codename}"
-                )
-
-                st.success("Changes are saved in-session. Use Export to download JSON.")
-
-# ---- EARLYBIRD – Email Digest Preview ----
+# EARLYBIRD Email Preview Page
 elif page == "EARLYBIRD – Email Digest Preview":
     st.subheader("5:30 am Daily Brief – Preview")
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        subject = st.text_input("Subject", value="Referee Daily Brief – Mon")
-        intro = st.text_area(
-            "Intro", value=(
-                "Good morning! Here are the top items for officials and assignors. Each has a one line take on why it matters."
-            ), height=90
-        )
-        bullets = st.experimental_data_editor(
-            {"Items": [
-                "NFHS updates guidance on concussion protocols; assignors should review pregame checklist.",
-                "Referee.com feature on conflict de escalation – great for preseason training decks.",
-                "NISOA adds spring clinic dates; consider cross posting for college refs.",
-            ]}, num_rows="dynamic"
-        )
-        footer = st.text_input(
-            "Footer", value="Reply with topics you want tracked. BeOfficial · EarlyBird"
-        )
-
-    with col2:
-        preview = email_preview(
-            subject=subject,
-            intro=intro,
-            bullets=[x for x in bullets["Items"] if x],
-            footer=footer,
-        )
-        st.markdown("**Preview (plain text)**")
-        st.code(preview, language="text")
-
-    st.info("This is a composition view only. Actual fetching and delivery will be added later.")
-
-# ---- SPARK – Content Calendar ----
-elif page == "SPARK – Content Calendar":
-    st.subheader("One Week Content Calendar")
-
-    default_calendar = [
-        {"Day": "Mon", "Platform": "TikTok", "Concept": "Weekend cash: 3 step start", "CTA": "Join interest list"},
-        {"Day": "Tue", "Platform": "Instagram", "Concept": "UGC: first uniform try on", "CTA": "Free Starter Guide"},
-        {"Day": "Wed", "Platform": "YouTube Short", "Concept": "Signals 101 in 45s", "CTA": "Clinic signup"},
-        {"Day": "Thu", "Platform": "LinkedIn", "Concept": "Leadership you gain officiating", "CTA": "Info call"},
-        {"Day": "Fri", "Platform": "Facebook", "Concept": "Myth busting: you need D1 skills?", "CTA": "Start local"},
-        {"Day": "Sat", "Platform": "TikTok", "Concept": "Game day bag checklist", "CTA": "Download PDF"},
-        {"Day": "Sun", "Platform": "Instagram", "Concept": "Spotlight: student official", "CTA": "Apply for fall league"},
-    ]
-
-    cal = st.experimental_data_editor(
-        {
-            "Day": [r["Day"] for r in default_calendar],
-            "Platform": [r["Platform"] for r in default_calendar],
-            "Concept": [r["Concept"] for r in default_calendar],
-            "CTA": [r["CTA"] for r in default_calendar],
-        }, num_rows="dynamic"
+    subject = st.text_input("Subject", "Referee Daily Brief – Mon")
+    intro = st.text_area(
+        "Intro",
+        "Good morning! Here are the top items for officials and assignors. Each has a one line take on why it matters.",
     )
+    bullets = st.text_area(
+        "Items (one per line)",
+        "NFHS updates guidance on concussion protocols.\nReferee.com feature on conflict de-escalation.\nNISOA adds spring clinic dates.",
+    )
+    footer = st.text_input("Footer", "Reply with topics you want tracked. BeOfficial · EarlyBird")
 
-    output_rows = []
-    for i in range(len(cal["Day"])):
-        row = {
-            "Day": cal["Day"][i],
-            "Platform": cal["Platform"][i],
-            "Concept": cal["Concept"][i],
-            "CTA": cal["CTA"][i],
-        }
-        if any(row.values()):
-            output_rows.append(row)
+    preview = email_preview(subject, intro, bullets.splitlines(), footer)
+    st.markdown("**Preview**")
+    st.code(preview, language="text")
 
-    if output_rows:
-        buf = json.dumps({"calendar": output_rows}, indent=2).encode("utf-8")
-        _download_bytes("spark_content_calendar.json", buf)
-        st.success("Calendar ready. Download JSON above.")
+# Agents Page
+elif page == "Agents":
+    st.subheader("Agent Profiles")
+    for agent in AGENTS:
+        with st.expander(f"{agent.name} ({agent.codename})"):
+            st.write(agent.mission)
+            st.write(agent.kpis)
 
-# ---- Export ----
+# Export Page
 elif page == "Export":
     st.subheader("Export Project Files")
-
-    colA, colB = st.columns([1, 1])
-    with colA:
-        st.markdown("**Agents JSON**")
-        export_agents_json(AGENTS)
-
-    with colB:
-        st.markdown("**README notes**")
-        readme = (
-            "BeOfficial Agents configuration exported from Streamlit.
-
-"
-            "Files: beofficial_agents.json (agents), spark_content_calendar.json (optional).
-"
-            "Next: connect automations for news fetching, email delivery, social scheduling, and day-of dashboards."
-        )
-        _download_bytes("README_beofficial.txt", readme.encode("utf-8"))
-
-    st.info("Keep this JSON under version control so changes to agents are tracked over time.")
+    export_agents_json(AGENTS)
+    st.info("Click above to download your agent data as JSON.")
