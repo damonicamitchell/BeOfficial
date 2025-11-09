@@ -1,8 +1,8 @@
 """
 BeOfficial Agents – Streamlit App (app.py)
 
-Production-ready Streamlit app for defining BeOfficial's agent team and exporting
-config files. No external network calls; this is an authoring and review tool.
+Command-center style Streamlit app for BeOfficial's agent team with a rich
+landing page, visual cards, KPIs, and exports. No external network calls.
 
 How to run locally:
   1) Save this file as app.py
@@ -12,11 +12,15 @@ How to run locally:
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
 import json
 import datetime as dt
 import streamlit as st
 
-st.set_page_config(page_title="BeOfficial Agents", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="BeOfficial Command Center", page_icon="🏀", layout="wide")
 
 # =========================
 # Data Models
@@ -302,6 +306,38 @@ def load_default_agents() -> List[Agent]:
 # Utility Functions
 # =========================
 
+def send_email(to_email: str, subject: str, body: str) -> str:
+    """Send email via SMTP using environment variables.
+    Required env vars: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.
+    Returns a status message string.
+    """
+    required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"]
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        return f"Missing environment variables: {', '.join(missing)}"
+
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ["SMTP_PORT"])  # e.g., 587
+    user = os.environ["SMTP_USER"]
+    pwd = os.environ["SMTP_PASS"]
+    from_email = os.environ["SMTP_FROM"]
+
+    msg = EmailMessage()
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    context = ssl.create_default_context()
+    try:
+        with smtplib.SMTP(host, port) as server:
+            server.starttls(context=context)
+            server.login(user, pwd)
+            server.send_message(msg)
+        return "OK"
+    except Exception as e:
+        return f"Error: {e}"
+
 def export_agents_json(agents: List[Agent]):
     payload = {
         "exported_at": dt.datetime.now().isoformat(),
@@ -313,6 +349,7 @@ def export_agents_json(agents: List[Agent]):
         data=json.dumps(payload, indent=2),
         file_name="beofficial_agents.json",
         mime="application/json",
+        use_container_width=True,
     )
 
 
@@ -322,15 +359,41 @@ def email_preview(subject: str, intro: str, bullets: List[str], footer: str) -> 
         "",
         intro,
         "",
-        *[f"• {b}" for b in bullets],
+        *[f"• {b}" for b in bullets if b.strip()],
         "",
         footer,
     ]
-    return "\\n".join(body)  # ✅ FIXED HERE
+    return "
+".join(body)
+
+
+def kpi_badge(text: str):
+    st.markdown(
+        f"""
+        <div style='display:inline-block;padding:6px 10px;border-radius:999px;background:#F1F5F9;font-weight:600;'>
+            {text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def card(title: str, subtitle: str = "", body: str = "", footer: str = ""):
+    st.markdown(
+        f"""
+        <div style='border:1px solid #e5e7eb;border-radius:16px;padding:18px;background:white;box-shadow:0 1px 2px rgba(0,0,0,.04);'>
+          <div style='font-size:18px;font-weight:800;margin-bottom:4px'>{title}</div>
+          <div style='color:#475569;margin-bottom:12px'>{subtitle}</div>
+          <div style='line-height:1.55;color:#0f172a'>{body}</div>
+          <div style='margin-top:12px;color:#64748b;font-size:13px'>{footer}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # =========================
-# App UI
+# App State
 # =========================
 
 if "agents" not in st.session_state:
@@ -338,58 +401,325 @@ if "agents" not in st.session_state:
 
 AGENTS = st.session_state.agents
 
-st.title("BeOfficial Agent Team")
-st.caption(
-    "Define, edit, and export agent profiles for recruiting, social content, industry news, lead gen, and tournament coordination."
-)
+# Simple status mock so the dashboard feels alive
+STATUS = {
+    "SCRIBE": {"status": "On Track", "pct": 0.6, "next": "Draft Week 1 newsletter"},
+    "SPARK": {"status": "Needs Assets", "pct": 0.35, "next": "Collect 10 UGC clips"},
+    "EARLYBIRD": {"status": "Ready", "pct": 0.9, "next": "Finalize digest template"},
+    "MAGNET": {"status": "Building", "pct": 0.5, "next": "Design 2 lead magnets"},
+    "RALLY": {"status": "Scouting", "pct": 0.4, "next": "Confirm venue maps"},
+}
 
-# Sidebar
+
+# =========================
+# Navigation
+# =========================
+
 st.sidebar.header("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["Overview", "Agents", "EARLYBIRD – Email Digest Preview", "Export"],
+    [
+        "Dashboard",
+        "Agents",
+        "EARLYBIRD – Email Digest Preview",
+        "Send Test Email",
+        "Export",
+    ],
 )
 
-# Overview Page
-if page == "Overview":
-    st.subheader("Quick Overview")
-    st.table(
-        {
-            "Agent": [a.name for a in AGENTS],
-            "Codename": [a.codename for a in AGENTS],
-            "Primary KPI": [a.kpis[0] for a in AGENTS],
-            "Primary Output": [a.outputs[0] for a in AGENTS],
-        }
+st.sidebar.divider()
+st.sidebar.subheader("Quick Settings")
+st.sidebar.text_input("Brand Voice Notes", value="Friendly, clear, energetic, zero fluff")
+st.sidebar.text_input("Primary CTA URL", value="https://beofficial.example.com/start")
+
+
+# =========================
+# Dashboard (Landing Page)
+# =========================
+
+if page == "Dashboard":
+    # Hero
+    st.markdown(
+        """
+        <div style='padding:18px 20px;border-radius:18px;background:linear-gradient(135deg,#111827, #1f2937);color:white;margin-bottom:14px;'>
+          <div style='display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;'>
+            <div>
+              <div style='font-size:28px;font-weight:900;'>BeOfficial Command Center</div>
+              <div style='opacity:.9;margin-top:6px;'>See what every agent is doing at a glance, track KPIs, and download outputs.</div>
+            </div>
+            <div style='font-size:13px;opacity:.9;'>Updated: {now}</div>
+          </div>
+        </div>
+        """.format(now=dt.datetime.now().strftime("%b %d, %Y %I:%M %p")),
+        unsafe_allow_html=True,
     )
 
-# EARLYBIRD Email Preview Page
-elif page == "EARLYBIRD – Email Digest Preview":
-    st.subheader("5:30 am Daily Brief – Preview")
-    subject = st.text_input("Subject", "Referee Daily Brief – Mon")
-    intro = st.text_area(
-        "Intro",
-        "Good morning! Here are the top items for officials and assignors. Each has a one line take on why it matters.",
-    )
-    bullets = st.text_area(
-        "Items (one per line)",
-        "NFHS updates guidance on concussion protocols.\nReferee.com feature on conflict de-escalation.\nNISOA adds spring clinic dates.",
-    )
-    footer = st.text_input("Footer", "Reply with topics you want tracked. BeOfficial · EarlyBird")
+    # Top KPI strip
+    colA, colB, colC, colD = st.columns(4)
+    with colA:
+        card("📧 Pipeline", "Last 7 days", body="<b>+142</b> new subscribers", footer="MAGNET")
+    with colB:
+        card("🎯 Open Rate", "Weekly newsletter", body="<b>38.6%</b>", footer="SCRIBE")
+    with colC:
+        card("🎬 Content Posts", "This week", body="<b>9</b> / 10 planned", footer="SPARK")
+    with colD:
+        card("🗞️ Briefs Sent", "This week", body="<b>5</b> / 5 on time", footer="EARLYBIRD")
 
-    preview = email_preview(subject, intro, bullets.splitlines(), footer)
-    st.markdown("**Preview**")
-    st.code(preview, language="text")
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# Agents Page
+    # Agent cards grid
+    for i in range(0, len(AGENTS), 2):
+        cols = st.columns(2)
+        for j, col in enumerate(cols):
+            if i + j >= len(AGENTS):
+                continue
+            agent = AGENTS[i + j]
+            status = STATUS.get(agent.codename, {"status": "—", "pct": 0.0, "next": "—"})
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"### {agent.name}  ")
+                    kpi_badge(f"{agent.codename} · {status['status']}")
+                    st.progress(status["pct"])
+                    st.write(agent.mission)
+
+                    left, right = st.columns([1.2, 1])
+                    with left:
+                        st.markdown("**Expected Outputs**")
+                        for o in agent.outputs[:3]:
+                            st.write(f"• {o}")
+                        if len(agent.outputs) > 3:
+                            st.caption(f"+{len(agent.outputs) - 3} more outputs in profile")
+                    with right:
+                        st.markdown("**Primary KPIs**")
+                        for k in agent.kpis[:2]:
+                            st.write(f"• {k}")
+                        st.markdown("**Next Action**")
+                        st.write(status["next"])
+
+                    st.markdown("**Quick Actions**")
+                    ca1, ca2, ca3 = st.columns(3)
+                    with ca1:
+                        st.button("View Profile", key=f"view_{agent.codename}")
+                    with ca2:
+                        st.button("Download JSON", key=f"dl_{agent.codename}")
+                    with ca3:
+                        st.button("Add Note", key=f"note_{agent.codename}")
+
+
+# =========================
+# Agents Editor
+# =========================
+
 elif page == "Agents":
     st.subheader("Agent Profiles")
-    for agent in AGENTS:
-        with st.expander(f"{agent.name} ({agent.codename})"):
-            st.write(agent.mission)
-            st.write(agent.kpis)
 
-# Export Page
+    tabs = st.tabs([a.codename for a in AGENTS])
+    for tab, agent in zip(tabs, AGENTS):
+        with tab:
+            with st.container(border=True):
+                left, right = st.columns([1.2, 1])
+                with left:
+                    st.markdown(f"### {agent.name}  
+**Codename:** `{agent.codename}`")
+                    agent.mission = st.text_area(
+                        "Mission", value=agent.mission, height=100, key=f"ms_{agent.codename}"
+                    )
+                    agent.target_audience = st.text_input(
+                        "Target audience", value=agent.target_audience, key=f"ta_{agent.codename}"
+                    )
+                    agent.value_proposition = st.text_area(
+                        "Value proposition", value=agent.value_proposition, height=90, key=f"vp_{agent.codename}"
+                    )
+                with right:
+                    st.markdown("**KPIs**")
+                    kpi_edit = st.experimental_data_editor(
+                        {"KPIs": agent.kpis}, num_rows="dynamic", key=f"kpi_{agent.codename}"
+                    )
+                    agent.kpis = [k for k in kpi_edit["KPIs"] if k]
+
+                cols = st.columns(2)
+                with cols[0]:
+                    st.markdown("**Core tasks**")
+                    core_edit = st.experimental_data_editor(
+                        {"Tasks": agent.core_tasks}, num_rows="dynamic", key=f"core_{agent.codename}"
+                    )
+                    agent.core_tasks = [t for t in core_edit["Tasks"] if t]
+
+                    st.markdown("**Inputs**")
+                    inp_edit = st.experimental_data_editor(
+                        {"Inputs": agent.inputs}, num_rows="dynamic", key=f"inp_{agent.codename}"
+                    )
+                    agent.inputs = [i for i in inp_edit["Inputs"] if i]
+
+                    st.markdown("**Outputs**")
+                    out_edit = st.experimental_data_editor(
+                        {"Outputs": agent.outputs}, num_rows="dynamic", key=f"out_{agent.codename}"
+                    )
+                    agent.outputs = [o for o in out_edit["Outputs"] if o]
+
+                with cols[1]:
+                    st.markdown("**Data sources**")
+                    src_edit = st.experimental_data_editor(
+                        {"Sources": agent.data_sources}, num_rows="dynamic", key=f"src_{agent.codename}"
+                    )
+                    agent.data_sources = [s for s in src_edit["Sources"] if s]
+
+                    st.markdown("**Guardrails**")
+                    grd_edit = st.experimental_data_editor(
+                        {"Rules": agent.guardrails}, num_rows="dynamic", key=f"grd_{agent.codename}"
+                    )
+                    agent.guardrails = [g for g in grd_edit["Rules"] if g]
+
+                if agent.example_prompts:
+                    st.markdown("**Example prompts**")
+                    for p in agent.example_prompts:
+                        st.code(p, language="text")
+
+                agent.notes = st.text_area(
+                    "Implementation notes (optional)", value=agent.notes or "", key=f"nt_{agent.codename}"
+                )
+
+                st.success("Changes are saved in-session. Use Export to download JSON.")
+
+
+# =========================
+# EARLYBIRD – Email Digest Preview
+# =========================
+
+elif page == "EARLYBIRD – Email Digest Preview":
+    st.subheader("5:30 am Daily Brief – Preview")
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        subject = st.text_input("Subject", value="Referee Daily Brief – Mon")
+        intro = st.text_area(
+            "Intro", value=(
+                "Good morning! Here are the top items for officials and assignors. Each has a one line take on why it matters."
+            ), height=90
+        )
+        items_default = [
+            "NFHS updates guidance on concussion protocols; assignors should review pregame checklist.",
+            "Referee.com feature on conflict de escalation – great for preseason training decks.",
+            "NISOA adds spring clinic dates; consider cross posting for college refs.",
+        ]
+        items = st.experimental_data_editor({"Items": items_default}, num_rows="dynamic")
+        footer = st.text_input(
+            "Footer", value="Reply with topics you want tracked. BeOfficial · EarlyBird"
+        )
+
+    with col2:
+        preview = email_preview(
+            subject=subject,
+            intro=intro,
+            bullets=[x for x in items["Items"] if x],
+            footer=footer,
+        )
+        st.markdown("**Preview (plain text)**")
+        st.code(preview, language="text")
+
+    st.info("This is a composition view only. Use Send Test Email to email this preview.")
+
+
+# =========================
+# Send Test Email
+# =========================
+
+elif page == "Send Test Email":
+    st.subheader("Send Test Email")
+    st.caption("Use this page to send a one time test of the EARLYBIRD brief via SMTP.")
+
+    default_subject = "Referee Daily Brief – Test"
+    default_body = email_preview(
+        subject=default_subject,
+        intro=("Good morning! Sample items below."),
+        bullets=[
+            "NFHS clarifies points of emphasis for basketball.",
+            "Referee.com article on game management.",
+            "Local assignor adds winter clinic dates.",
+        ],
+        footer="Reply with topics you want tracked. BeOfficial · EarlyBird",
+    )
+
+    with st.form("send_form"):
+        to_email = st.text_input("To", value="vernon.crumpjr@be0fficial.com")
+        subject = st.text_input("Subject", value=default_subject)
+        body = st.text_area("Body", value=default_body, height=240)
+        submitted = st.form_submit_button("Send Email Now")
+
+    st.markdown("**SMTP Environment Variables**")
+    st.code(
+        """
+        # Example for Gmail SMTP with app password
+        export SMTP_HOST=smtp.gmail.com
+        export SMTP_PORT=587
+        export SMTP_USER=your_gmail_username
+        export SMTP_PASS=your_app_password
+        export SMTP_FROM=Your Name <your_gmail_username@gmail.com>
+        """,
+        language="bash",
+    )
+
+    if submitted:
+        status = send_email(to_email, subject, body)
+        if status == "OK":
+            st.success(f"Email sent to {to_email}")
+        else:
+            st.error(status)
+            st.stop()
+
+# =========================
+# Export
+# =========================
+
 elif page == "Export":
     st.subheader("Export Project Files")
-    export_agents_json(AGENTS)
-    st.info("Click above to download your agent data as JSON.")
+
+    colA, colB = st.columns([1, 1])
+    with colA:
+        st.markdown("**Agents JSON**")
+        export_agents_json(AGENTS)
+
+    with colB:
+        st.markdown("**README notes**")
+        readme = (
+            "BeOfficial Agents configuration exported from Streamlit.
+
+"
+            "Files: beofficial_agents.json (agents).
+"
+            "Next: connect automations for news fetching, email delivery, social scheduling, lead capture, and day-of dashboards."
+        )
+        st.download_button(
+            label="⬇️ Download README",
+            data=readme.encode("utf-8"),
+            file_name="README_beofficial.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+# =========================
+
+elif page == "Export":
+    st.subheader("Export Project Files")
+
+    colA, colB = st.columns([1, 1])
+    with colA:
+        st.markdown("**Agents JSON**")
+        export_agents_json(AGENTS)
+
+    with colB:
+        st.markdown("**README notes**")
+        readme = (
+            "BeOfficial Agents configuration exported from Streamlit.
+
+"
+            "Files: beofficial_agents.json (agents).
+"
+            "Next: connect automations for news fetching, email delivery, social scheduling, lead capture, and day-of dashboards."
+        )
+        st.download_button(
+            label="⬇️ Download README",
+            data=readme.encode("utf-8"),
+            file_name="README_beofficial.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
